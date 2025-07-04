@@ -1,0 +1,352 @@
+---
+title: "Predicción del Precio de Bitcoin usando Sentimiento de Tweets"
+author: |
+  Danilo Piñones Jamett - 21.101.875-5  
+  Isidora Ulloa Castillo - 21.209.873-6 <br>
+  Maurely Caro Pinto - 20.039.121-7
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduccion
+
+El mercado de criptomonedas, y en particular el Bitcoin, se caracteriza por su alta volatilidad y sensibilidad a factores externos, entre ellos, la opinión pública expresada en redes sociales. Este proyecto tiene como objetivo principal predecir el precio diario de cierre del Bitcoin utilizando análisis de sentimiento extraído de tweets relacionados con la criptomoneda durante el año 2021.
+
+Para ello, se aplican técnicas de procesamiento de lenguaje natural para cuantificar el sentimiento diario, que luego se combina con datos históricos de precios y volumen para construir un modelo predictivo basado en Random Forest. Este modelo busca capturar patrones tanto en la evolución del precio como en las señales emocionales del mercado para mejorar la precisión en la predicción.
+
+Además, se diseñan y comparan distintas estrategias de inversión basadas en las predicciones generadas, evaluando su desempeño en términos de rentabilidad y riesgo. Esto permite no solo validar la utilidad práctica del modelo, sino también aportar ideas para la toma de decisiones informadas en un mercado altamente dinámico y complejo.
+# Objetivos del Proyecto
+
+El objetivo de este proyecto es predecir el precio diario de cierre del Bitcoin en base al análisis de sentimiento de publicaciones en Twitter, utilizando modelos de aprendizaje automático como Random Forest. Además, se simulan estrategias de inversión basadas en las predicciones obtenidas.
+
+# Métodos Utilizados
+
+- Limpieza y procesamiento de texto
+- Análisis de sentimiento con `syuzhet`
+- Ingeniería de variables (rezagos, volatilidad, retornos)
+- Modelado predictivo con Random Forest y validación cruzada
+- Simulación de estrategias de inversión
+
+## 1. Carga de paquetes y datos
+
+```{r paquetes}
+library(dplyr)
+library(lubridate)
+library(syuzhet)
+library(ggplot2)
+library(magrittr)
+library(randomForest)
+library(caret)
+library(pROC)
+library(tidyr)
+library(openxlsx)
+library(readxl)
+library(openxlsx)
+library(scales)
+```
+
+## 2. Analisis de sentimientos
+En este informe no se ejecuto el código completo para el análisis de sentimiento de los tweets debido a los elevados tiempos de ejecución que presenta esta etapa del procesamiento. El cálculo del sentimiento utilizando la librería syuzhet sobre el conjunto completo de tweets para todo el año 2021 puede tardar alrededor de seis horas en ejecutarse, lo que hace poco práctico su uso en contextos donde se requiere rapidez y eficiencia. Por esta razón, el código correspondiente se dejó comentado para evitar su ejecución directa, pero se conserva en el repositorio para referencia o posibles ejecuciones posteriores. Esta decisión permite centrar el análisis en la modelación predictiva y la evaluación de estrategias de inversión sin comprometer la reproducibilidad ni la integridad del proyecto.
+
+Los resultados derivados de estas ejecuciones se encuentran almacenados en el dataset modelo_data123, que sirve como base para el análisis presentado en este informe.
+
+```{r analsis de sentimiento}
+# Convertir columnas de fecha
+#bitcoin_tweets_2021$date <- as.Date(bitcoin_tweets_2021$datetime)
+#btc_2021$Start <- as.Date(btc_2021$Start)
+
+# Arreglar caracteres inválidos y convertir a minúsculas
+#bitcoin_tweets_2021$text <- iconv(bitcoin_tweets_2021$text, from = "", to = "UTF-8", sub = "")
+#bitcoin_tweets_2021$text <- tolower(bitcoin_tweets_2021$text)
+
+#Calcular sentimiento de los tweets
+#bitcoin_tweets_2021 <- bitcoin_tweets_2021 %>%
+#  mutate(sentiment = get_sentiment(text, method = "syuzhet"))
+
+#Sentimiento promedio diario
+#daily_sentiment <- bitcoin_tweets_2021 %>%
+#  group_by(date) %>%
+#  summarise(avg_sentiment = mean(sentiment, na.rm = TRUE), .groups = "drop")
+
+
+# Unir sentimiento con precios
+#modelo_data <- merge(btc_2021, daily_sentiment, by.x = "Start", by.y = "date", all.x = TRUE) %>%
+#  filter(!is.na(avg_sentiment), !is.na(Close), !is.na(Open), !is.na(Volume)) %>%
+#  arrange(Start)
+```
+
+## 3. Visualización: Sentimiento vs Precio
+El gráfico muestra la evolución del sentimiento promedio diario extraído de tweets relacionados con Bitcoin (representado en línea azul) junto con el precio de cierre del Bitcoin normalizado (línea roja) durante el año 2021. La normalización del precio permite comparar visualmente ambas series en una misma escala, facilitando la identificación de posibles correlaciones o patrones entre el sentimiento expresado en redes sociales y el comportamiento del mercado. Aunque no siempre coinciden perfectamente, se pueden observar momentos en los que aumentos en el sentimiento positivo se reflejan en subidas del precio, sugiriendo que las emociones y percepciones del público pueden influir en la dinámica del mercado criptográfico. Este análisis visual es fundamental para entender el potencial valor predictivo del sentimiento en la modelación del precio del Bitcoin.
+
+```{r grafico-sentimiento}
+modelo_data <- read_excel("modelo_data123.xlsx")
+
+
+ggplot(modelo_data, aes(x = Start)) +
+  geom_line(aes(y = avg_sentiment), color = "blue", size = 1, alpha = 0.7) +
+  geom_line(aes(y = Close / max(Close, na.rm = TRUE)), color = "red", size = 1, alpha = 0.7) +
+  labs(title = "Sentimiento diario vs Precio de Bitcoin en 2021",
+       x = "Fecha", y = "Escala normalizada", caption = "Línea azul: sentimiento promedio diario | Línea roja: precio Bitcoin normalizado") +
+  theme_minimal()
+```
+
+## 4. Creacion de variables
+
+En esta sección se realiza la creación de variables para enriquecer el conjunto de datos con características relevantes que permitan mejorar la capacidad predictiva del modelo. Se generan variables rezagadas (lags) de las principales métricas, como el sentimiento promedio, volumen y precios de apertura, para capturar la influencia del comportamiento histórico en el precio diario del Bitcoin. Además, se calculan indicadores como el retorno absoluto y el retorno porcentual diario para reflejar las variaciones del precio durante la jornada. Se incluye también la variable categórica del día de la semana para incorporar posibles efectos estacionales o patrones asociados al calendario. Finalmente, se calcula la volatilidad acumulada, que representa la variabilidad histórica de los retornos y es fundamental para entender la incertidumbre del mercado. Estas transformaciones permiten que el modelo tenga en cuenta tanto información histórica como patrones temporales y de riesgo, mejorando así su desempeño predictivo.
+
+```{r variables}
+library(dplyr)
+
+modelo_data <- modelo_data %>%
+  mutate(
+    avg_sentiment_lag1 = lag(avg_sentiment, 1),
+    avg_sentiment_lag2 = lag(avg_sentiment, 2),
+    avg_sentiment_lag3 = lag(avg_sentiment, 3),
+    Volume_lag1 = lag(Volume, 1),
+    Volume_lag2 = lag(Volume, 2),
+    Volume_lag3 = lag(Volume, 3),
+    Open_lag1 = lag(Open, 1),
+    Open_lag2 = lag(Open, 2),
+    Open_lag3 = lag(Open, 3),
+    return = Close - Open,
+    weekday = weekdays(Start),
+    daily_return_pct = return / Open
+  ) %>%
+  arrange(Start)
+
+# Primero calculamos el retorno porcentual diario para la volatilidad
+modelo_data <- modelo_data %>%
+  mutate(
+    daily_return_pct = return / Open
+  ) %>%
+  arrange(Start)
+
+# Calcular volatilidad acumulada
+modelo_data <- modelo_data %>%
+  mutate(cumulative_volatility = sapply(1:nrow(.), function(i) {
+    if (i == 0) NA else sd(daily_return_pct[1:i], na.rm = TRUE)
+  }))
+
+# Ajustar factor para weekday (en español)
+modelo_data$weekday <- factor(modelo_data$weekday,
+  levels = c("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"))
+
+# Quitar filas con NAs que impiden modelar
+modelo_data_clean <- modelo_data %>%
+  filter(
+    !is.na(avg_sentiment_lag3),
+    !is.na(Volume_lag3),
+    !is.na(Open_lag3),
+    !is.na(cumulative_volatility)
+  )
+```
+
+## 5. Modelo Random Forest con validación cruzada
+El modelo utilizado para predecir el precio de cierre diario del Bitcoin es del tipo Random Forest, un algoritmo de aprendizaje automático basado en árboles de decisión que combina múltiples modelos para mejorar la precisión y reducir el sobreajuste. Para realizar este modelo, se seleccionaron variables que reflejan tanto el comportamiento histórico del mercado como el sentimiento expresado en redes sociales. Entre las variables principales se encuentran el precio de apertura del día y sus valores rezagados a 1, 2 y 3 días, que permiten captar tendencias recientes en el mercado. Además, se incorporan las medidas de sentimiento promedio de tweets relacionados con Bitcoin, también con rezagos de hasta tres días, para incluir la influencia del estado emocional de los inversores. Finalmente, se incluyen variables de volumen de transacciones rezagadas, que aportan información sobre la actividad del mercado. La combinación de estas variables busca proporcionar al modelo una visión integral que facilite la predicción del precio de cierre con mayor precisión.
+
+```{r modelo}
+set.seed(123)
+
+# Limpiar datos eliminando filas con NAs en las variables que usaremos
+modelo_data_clean <- modelo_data %>%
+  filter(
+    !is.na(Open), !is.na(Open_lag1), !is.na(Open_lag2),
+    !is.na(avg_sentiment_lag1), !is.na(avg_sentiment_lag2), !is.na(avg_sentiment_lag3),
+    !is.na(Volume_lag1), !is.na(Volume_lag2), !is.na(Volume_lag3),
+    !is.na(Close)
+  )
+
+n <- nrow(modelo_data_clean)
+train_index <- sample(1:n, size = 0.8 * n)
+train_data <- modelo_data_clean[train_index, ]
+test_data <- modelo_data_clean[-train_index, ]
+
+# Validación cruzada:
+train_control <- trainControl(method = "cv", number = 5)
+
+# Entrenamiento con validación cruzada y ajuste de mtry
+set.seed(123)
+modelo_cv <- train(
+  Close ~ Open + 
+    Open_lag1 + Open_lag2 +
+    avg_sentiment_lag1 + avg_sentiment_lag2 + avg_sentiment_lag3 +
+    Volume_lag1 + Volume_lag2 + Volume_lag3,
+  data = train_data,
+  method = "rf",
+  trControl = train_control,
+  tuneLength = 5,
+  ntree = 300
+)
+
+print(modelo_cv)
+```
+
+## 6. Evaluación del modelo
+
+En esta sección se evalúa el desempeño del modelo a través de sus resultados en los conjuntos de entrenamiento y prueba. Se utilizaron las métricas MAE (Error Absoluto Medio) y RMSE (Raíz del Error Cuadrático Medio) para medir la precisión de las predicciones. El MAE refleja el error promedio entre los precios reales y los precios predichos, mientras que el RMSE penaliza con mayor fuerza los errores grandes. Los resultados muestran que el modelo obtiene un error relativamente bajo en el conjunto de entrenamiento, lo que indica un buen ajuste a los datos utilizados para aprender. Sin embargo, los errores son más altos en el conjunto de prueba, lo que es esperable ya que este conjunto contiene datos no vistos por el modelo. Esta diferencia sugiere la posibilidad de un leve sobreajuste, pero también refleja la dificultad de predecir un mercado tan volátil como el del Bitcoin. En general, las métricas obtenidas permiten concluir que el modelo logra capturar patrones útiles para la predicción, aunque existe margen para seguir optimizando su rendimiento.
+```{r evaluacion}
+train_data$predicted_train <- predict(modelo_cv, newdata = train_data)
+test_data$predicted_price <- predict(modelo_cv, newdata = test_data)
+
+mae_train <- mean(abs(train_data$Close - train_data$predicted_train))
+rmse_train <- sqrt(mean((train_data$Close - train_data$predicted_train)^2))
+mae_test <- mean(abs(test_data$Close - test_data$predicted_price))
+rmse_test <- sqrt(mean((test_data$Close - test_data$predicted_price)^2))
+
+cat("Entrenamiento - MAE:", round(mae_train, 2), "\n")
+cat("Entrenamiento - RMSE:", round(rmse_train, 2), "\n")
+cat("Prueba - MAE:", round(mae_test, 2), "\n")
+cat("Prueba - RMSE:", round(rmse_test, 2), "\n")
+```
+
+## 7. Precio real vs predicho
+
+```{r grafico-predicciones}
+ggplot(test_data, aes(x = Start)) +
+  geom_line(aes(y = Close, color = "Real"), size = 1) +
+  geom_line(aes(y = predicted_price, color = "Predicho"), size = 1, linetype = "dashed") +
+  labs(title = "Bitcoin: Precio real vs predicho",
+       x = "Fecha", y = "Precio (USD)", color = "Leyenda") +
+  scale_color_manual(values = c("Real" = "black", "Predicho" = "blue")) +
+  theme_minimal()
+```
+
+## 8. Análisis Temporal: Comportamiento Semanal del Volumen y Retorno
+
+Con el fin de explorar patrones temporales en el mercado de Bitcoin, se realizó un análisis del volumen de transacción y los retornos diarios promedio según el día de la semana. En el primer gráfico se observa el volumen promedio de transacciones para cada día, lo cual permite identificar si existen días con mayor actividad en el mercado. En el segundo gráfico se muestra el retorno promedio diario, revelando posibles tendencias o anomalías sistemáticas asociadas a ciertos días. Este tipo de análisis es útil para detectar regularidades temporales que podrían ser consideradas en estrategias de trading o como variables explicativas en modelos predictivos.
+
+```{r dias}
+# Gráfico: Volumen promedio por día de la semana
+modelo_data_clean %>%
+  group_by(weekday) %>%
+  summarise(prom_volumen = mean(Volume, na.rm = TRUE)) %>%
+  ggplot(aes(x = weekday, y = prom_volumen)) +
+  geom_col(fill = "steelblue") +
+  scale_y_continuous(labels = comma) +  # <--- esta línea arregla el formato del eje y
+  labs(
+    title = "Volumen promedio por día de la semana",
+    x = "Día de la semana",
+    y = "Volumen promedio"
+  ) +
+  theme_minimal()
+
+# Gráfico: Retorno promedio por día de la semana
+modelo_data_clean %>%
+  group_by(weekday) %>%
+  summarise(prom_return = mean(return, na.rm = TRUE)) %>%
+  ggplot(aes(x = weekday, y = prom_return)) +
+  geom_col(fill = "darkgreen") +
+  labs(title = "Retorno promedio diario por día de la semana",
+       x = "Día de la semana", y = "Retorno promedio (USD)") +
+  theme_minimal()
+
+```
+
+## 9. Comparación de estrategias de inversión
+
+En esta sección se evalúan distintas estrategias de inversión simuladas utilizando las predicciones generadas por el modelo. Se comparan alternativas basadas en señales de compra y venta derivadas del análisis de sentimiento y la evolución del precio del Bitcoin. El objetivo es analizar cuál estrategia ofrece un mejor rendimiento ajustado al riesgo, considerando métricas como la rentabilidad acumulada, la volatilidad y el drawdown máximo. Esta comparación permite validar el valor práctico del modelo predictivo no solo en términos estadísticos, sino también en su aplicación financiera real, facilitando la toma de decisiones informadas para invertir en mercados volátiles como el de las criptomonedas.
+
+### 9.1 Estrategia 1
+Esta estrategia consiste en invertir siempre que el modelo prediga una subida en el precio de Bitcoin. Es decir, si el modelo estima que el precio de cierre será mayor que el precio de apertura, se realiza la inversión ese día. Esta aproximación es sencilla y busca aprovechar las señales positivas generadas por el modelo para obtener rentabilidad. La idea es capitalizar las oportunidades en las que el modelo anticipa un movimiento alcista, evitando invertir en días con predicciones negativas o neutras.
+
+### 9.2 Estrategia 2
+La segunda estrategia es una variación de la primera, en la que se evita invertir en los días martes y jueves, aun cuando la predicción sea positiva. Esta decisión se basa en la observación de que ciertos días de la semana pueden presentar comportamientos menos favorables o mayor volatilidad, lo que podría aumentar el riesgo. Por tanto, se filtran esos días específicos para tratar de mejorar el rendimiento y reducir pérdidas potenciales, limitando la inversión solo a los días con mayor probabilidad de éxito según el modelo.
+
+### 9.3 Estrategia 3
+Se introduce un filtro más exigente para decidir cuándo invertir, basándose en un umbral fijo que se calcula a partir de la desviación estándar histórica de los retornos reales. Solo se realiza la inversión cuando la predicción de subida supera la mitad de esta desviación estándar, es decir, cuando el modelo anticipa un cambio significativo en el precio. Esta táctica busca minimizar las inversiones en movimientos pequeños o poco confiables, enfocándose en las señales más fuertes para incrementar la probabilidad de obtener ganancias sustanciales.
+
+### 9.4 Estrategia 4
+se utiliza un umbral adaptativo que varía dinámicamente según la volatilidad acumulada del mercado. Este enfoque ajusta la exigencia para invertir dependiendo de cómo cambia la volatilidad a lo largo del tiempo: en periodos de alta volatilidad, el umbral es más alto para evitar señales falsas, mientras que en momentos de baja volatilidad, el umbral disminuye para aprovechar mejor las oportunidades. Esta estrategia busca una mayor flexibilidad y adaptabilidad, permitiendo que las decisiones de inversión se ajusten a las condiciones cambiantes del mercado y potencialmente mejoren el rendimiento.
+
+
+```{r estrategias}
+test_data_base <- test_data %>%
+  select(Start, Open, predicted_price, Close, weekday) %>%
+  mutate(
+    predicted_return = predicted_price - Open,
+    actual_return = Close - Open,
+    predicted_return_pct = predicted_return / Open,
+    actual_return_pct = actual_return / Open
+  )
+
+initial_investment <- 1000
+
+estrategia1 <- test_data_base %>%
+  mutate(
+    theoretical_return = ifelse(predicted_return > 0, actual_return, 0),
+    inv_estrategia1 = initial_investment * cumprod(1 + replace_na(theoretical_return / Open, 0))
+  ) %>% select(Start, inv_estrategia1)
+
+dias_negativos <- c("martes", "jueves")
+
+estrategia2 <- test_data_base %>%
+  mutate(
+    invertir = predicted_return > 0 & !(weekday %in% dias_negativos),
+    daily_return_pct = ifelse(invertir, actual_return / Open, 0),
+    inv_estrategia2 = initial_investment * cumprod(1 + replace_na(daily_return_pct, 0))
+  ) %>% select(Start, inv_estrategia2)
+
+sd_return <- sd(test_data_base$actual_return, na.rm = TRUE)
+threshold <- 0.5 * sd_return
+
+estrategia3 <- test_data_base %>%
+  mutate(
+    invertir = predicted_return > threshold,
+    theoretical_return = ifelse(invertir, actual_return, 0),
+    inv_estrategia3 = initial_investment * cumprod(1 + replace_na(theoretical_return / Open, 0))
+  ) %>% select(Start, inv_estrategia3)
+
+estrategia4 <- test_data_base %>%
+  mutate(
+    volatility_accum = sqrt(cummean((actual_return_pct - cummean(actual_return_pct))^2)),
+    threshold = 0.5 * volatility_accum,
+    invertir = predicted_return_pct > threshold,
+    daily_return_pct = ifelse(invertir, actual_return_pct, 0),
+    inv_estrategia4 = initial_investment * cumprod(1 + replace_na(daily_return_pct, 0))
+  ) %>% select(Start, inv_estrategia4)
+
+comparativo <- estrategia1 %>%
+  left_join(estrategia2, by = "Start") %>%
+  left_join(estrategia3, by = "Start") %>%
+  left_join(estrategia4, by = "Start") %>%
+  pivot_longer(cols = starts_with("inv_"), names_to = "estrategia", values_to = "valor") %>%
+  filter(!is.na(valor))
+
+comparativo$estrategia <- recode(comparativo$estrategia,
+  "inv_estrategia1" = "Estrategia 1",
+  "inv_estrategia2" = "Estrategia 2 (evita martes/jueves)",
+  "inv_estrategia3" = "Estrategia 3 (umbral fijo)",
+  "inv_estrategia4" = "Estrategia 4 (volatilidad adaptativa)")
+
+```
+
+## 10. Gráfico comparativo de estrategias
+
+```{r grafico-estrategias}
+ggplot(comparativo, aes(x = Start, y = valor, color = estrategia)) +
+  geom_line(size = 1) +
+  labs(title = "Comparación de estrategias de inversión basadas en predicciones",
+       x = "Fecha", y = "Valor de inversión (USD)", color = "Estrategia") +
+  theme_minimal() +
+  scale_color_manual(values = c(
+    "Estrategia 1" = "#1f77b4",
+    "Estrategia 2 (evita martes/jueves)" = "#ff7f0e",
+    "Estrategia 3 (umbral fijo)" = "#2ca02c",
+    "Estrategia 4 (volatilidad adaptativa)" = "#d62728"
+  ))
+
+```
+
+## Conclusion
+
+Este proyecto exploró la posibilidad de predecir el precio diario de cierre del Bitcoin a partir del análisis de sentimiento de publicaciones en Twitter y variables del mercado, utilizando un modelo de Random Forest. El modelo logró capturar ciertos patrones útiles, especialmente cuando se incorporaron rezagos del precio, volumen y sentimiento, lo que sugiere que el comportamiento reciente del mercado y las percepciones sociales pueden aportar señales relevantes para la predicción. Sin embargo, el desempeño fue notablemente mejor en el conjunto de entrenamiento que en el de prueba, lo cual indica que, si bien el modelo aprendió bien los datos históricos, su capacidad de generalización frente a nuevos datos es limitada.
+
+En relación al análisis de sentimiento, si bien su inclusión enriqueció el modelo y en algunos casos pareció anticipar movimientos del precio, su impacto no fue decisivo ni sistemáticamente fuerte. Esto sugiere que, aunque las emociones expresadas en redes sociales pueden influir en el mercado, no son un predictor confiable por sí solas. El mercado de criptomonedas sigue estando influido por múltiples factores difíciles de modelar, como noticias imprevistas, cambios regulatorios o decisiones de grandes inversores, lo que plantea desafíos adicionales para cualquier enfoque predictivo.
+
+Las simulaciones de estrategias de inversión mostraron que es posible mejorar los resultados frente a una estrategia pasiva, especialmente cuando se aplican filtros como umbrales o exclusión de días menos favorables. Sin embargo, estas mejoras deben interpretarse con precaución, ya que están calibradas sobre un año específico (2021) y podrían no replicarse en otros contextos. En definitiva, el estudio confirma que es viable utilizar datos de sentimiento en modelos predictivos, pero también resalta la necesidad de incorporar enfoques más robustos, fuentes de datos adicionales y pruebas fuera de muestra para evaluar realmente su utilidad en la toma de decisiones financieras.
+
+
+
