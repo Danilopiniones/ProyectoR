@@ -1,0 +1,4 @@
+
+Pesa 3gb y el github tiene limite de 100mb
+
+https://www.kaggle.com/datasets/hiraddolatzadeh/bitcoin-tweets-2021-2022?resource=download
